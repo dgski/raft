@@ -69,6 +69,9 @@ class Node {
       return std::chrono::system_clock::now() - otherNodeIsLeader->_lastHeartbeat > 2 * _timeoutInterval;
     }
   }
+  bool isLeader() {
+    return std::holds_alternative<ThisNodeIsLeader>(_state);
+  }
   void startElection() {
     _state = RunningForLeader{1};
     ++_currentTerm;
@@ -85,6 +88,9 @@ public:
   void onTimer() {
     if (leaderIsMissing()) {
       startElection();
+    }
+    if (isLeader()) {
+      _send(SEND_TO_ALL, Heartbeat{_currentTerm, _id});
     }
   }
   void onMessage(const Message& message) {
