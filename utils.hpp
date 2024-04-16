@@ -8,7 +8,7 @@
 namespace utils {
 
 auto getRandomTimeout() {
-  return std::chrono::seconds(3  + (rand() % 3));
+  return std::chrono::seconds(3  + (rand() % 5));
 }
 
 template<typename... Args>
