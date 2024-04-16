@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 #include <format>
+#include <unordered_map>
 
 #include "utils.hpp"
 
@@ -16,8 +17,9 @@ constexpr size_t SEND_TO_ALL = 0;
 // Messages
 struct RequestVote { size_t term; size_t nodeId; };
 struct ResponseVote { size_t term; size_t nodeId; bool success; };
-struct Heartbeat { size_t term; size_t nodeId; };
-using Message = std::variant<RequestVote, ResponseVote, Heartbeat>;
+struct LeaderHeartbeat { size_t term; size_t nodeId; };
+struct NodeHeartbeat { size_t nodeId; };
+using Message = std::variant<RequestVote, ResponseVote, LeaderHeartbeat, NodeHeartbeat>;
 
 // States
 struct Uninitialized {};
@@ -52,6 +54,7 @@ class Node {
   std::chrono::system_clock::time_point _lastEvent = std::chrono::system_clock::now();
   std::chrono::system_clock::time_point _relinquishleadershipTimepoint;
   State _state = Uninitialized();
+  std::unordered_map<size_t, std::chrono::system_clock::time_point> _lastNodeHeartbeats;
 // ---------------------------
   bool leaderIsMissing() {
     return _lastEvent + _timeoutInterval < std::chrono::system_clock::now();
@@ -83,6 +86,18 @@ class Node {
     }
     return false;
   }
+  void cleanupExpiredNodeHeartbeats() {
+    for (auto it = _lastNodeHeartbeats.begin(); it != _lastNodeHeartbeats.end();) {
+      if (it->second + std::chrono::seconds(5) < std::chrono::system_clock::now()) {
+        it = _lastNodeHeartbeats.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  size_t getQuorumSize() {
+    return (_lastNodeHeartbeats.size() + 1) / 2;
+  }
 public:
   Node(size_t id)
     : _id(id),
@@ -96,12 +111,15 @@ public:
       startElection();
     }
     if (isLeader()) {
-      _send(SEND_TO_ALL, Heartbeat{_currentTerm, _id});
+      _send(SEND_TO_ALL, LeaderHeartbeat{_currentTerm, _id});
       _lastEvent = std::chrono::system_clock::now();
       if (relinquishLeadership()) {
-        _state = Sleeping{std::chrono::system_clock::now() + std::chrono::seconds(5)};
+        _state = Sleeping{std::chrono::system_clock::now() + std::chrono::seconds(10)};
       }
     }
+
+    cleanupExpiredNodeHeartbeats();
+    _send(SEND_TO_ALL, NodeHeartbeat{ _id });
 
     utils::log("Node {} term={} state={}", _id, _currentTerm, stateToString(_state));
   }
@@ -139,18 +157,21 @@ public:
     }
     if (auto runningForLeader = std::get_if<RunningForLeader>(&_state); runningForLeader) {
       if (response.success) {
-        if (++runningForLeader->votes > 2) {
+        if (++runningForLeader->votes > getQuorumSize()) {
           _state = ThisNodeIsLeader();
-          _send(SEND_TO_ALL, Heartbeat{_currentTerm, _id});
+          _send(SEND_TO_ALL, LeaderHeartbeat{_currentTerm, _id});
           _relinquishleadershipTimepoint = std::chrono::system_clock::now() + std::chrono::seconds(5);
         }
       }
     }
   }
-  void operator()(const Heartbeat& heartbeat) {
+  void operator()(const LeaderHeartbeat& heartbeat) {
     _state = OtherNodeIsLeader{heartbeat.nodeId};
     _lastEvent = std::chrono::system_clock::now();
     _currentTerm = heartbeat.term;
+  }
+  void operator()(const NodeHeartbeat& heartbeat) {
+    _lastNodeHeartbeats[heartbeat.nodeId] = std::chrono::system_clock::now();
   }
 };
 

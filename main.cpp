@@ -5,7 +5,7 @@ int main() {
   srand(time(nullptr));
   std::unordered_map<size_t, raft::Node> nodes;
   std::unordered_map<size_t, std::vector<raft::Message>> messages;
-  for (size_t i = 0; i < 5; ++i) {
+  for (size_t i = 0; i < 10; ++i) {
     nodes.emplace(i, i);
     messages.emplace(i, std::vector<raft::Message>());
   }
